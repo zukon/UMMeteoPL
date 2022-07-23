@@ -1,11 +1,12 @@
 from Plugins.Plugin import PluginDescriptor
+#import importlib
 
 def main(session, **kwargs):
 	try:
-		import Meteo 
-		reload(Meteo)
+		from .Meteo import Meteo 
+#		importlib.reload(Meteo)
 
-		session.open(Meteo.Meteo)
+		session.open(Meteo)
 	except:
 		import traceback
 		traceback.print_exc()

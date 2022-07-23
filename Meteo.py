@@ -1,6 +1,5 @@
 #!/usr/bin/python -u
 # -*- coding: UTF-8 -*-
-
 from Tools.Directories import resolveFilename, fileExists, SCOPE_PLUGINS
 from Screens.Screen import Screen
 from Components.Label import Label
@@ -9,11 +8,16 @@ from Components.ActionMap import ActionMap
 from Screens.ChoiceBox import ChoiceBox
 from Screens.MessageBox import MessageBox
 from Screens.TextBox import TextBox
-from twisted.web.client import getPage, downloadPage
 from Components.Console import Console
-import os,re
+from urllib.request import urlopen, Request, urlretrieve
+from urllib.error import URLError, HTTPError
+from Plugins.Extensions.PKT.InfoCenter import headers as hs
+from bs4 import BeautifulSoup
+import os
+import re
+import importlib
 
-version = '20.01.05'
+version = '22.07.23'
 
 PluginLocation = "Extensions/UMMeteoPL"
 PluginPath = resolveFilename(SCOPE_PLUGINS, PluginLocation)
@@ -76,7 +80,11 @@ class Meteo(Screen):
             "list": self.choose,
         }, -1)
 
-        getPage('http://e2.areq.eu.org/ummeteo/version').addCallback(self.updateCB).addErrback(self.errorUpdate)
+#        url = 'http://e2.areq.eu.org/ummeteo/version'
+#        try:
+#            self.updateCB(urlopen(Request(url, headers=hs)).read().decode("utf-8"))
+#        except:
+#            self.errorUpdate(urlopen(Request(url, headers=hs)).read().decode("utf-8"))
 
         self.onLayoutFinish.append(self.layoutFinished)
 
@@ -142,36 +150,41 @@ class Meteo(Screen):
             pass
 
     def errorUpdate(self, html):
-        print "[UMMeteo] - upgrade problem:", html
+        print("[UMMeteo] - upgrade problem:", html)
 
     def upgradeCB(self, result = None):
-        print "[UMMeteo] - upgrade:", result
+        print("[UMMeteo] - upgrade:", result)
         if result:
-            print "\n[UMMeteo] - upgrade yes\n"
-            downloadPage('http://e2.areq.eu.org/ummeteo/update.py',PluginPath + '/update.py').addCallback(self.goupCB).addErrback(self.errorUpdate)
+            print("\n[UMMeteo] - upgrade yes\n")
+            #downloadPage('http://e2.areq.eu.org/ummeteo/update.py',PluginPath + '/update.py').addCallback(self.goupCB).addErrback(self.errorUpdate)
         else:
-            print "[UMMeteo] upgrade cancel\n"
+            print("[UMMeteo] upgrade cancel\n")
 
     def goupCB(self, html):
-        print "[UMMeteo] - upgrade.py done:", html
+        print("[UMMeteo] - upgrade.py done:", html)
         try:
             import update
-            reload(update)
+            importlib.reload(update)
             self.session.open(update.DoUpdate) 
         except:
-            print "[UMMeteo] - upgrade.py - exception"
+            print("[UMMeteo] - upgrade.py - exception")
             import traceback
             traceback.print_exc() 
 
     def start_meteo(self, id ):
-        print "[UMMeteo] - miasto:", id
+        print("[UMMeteo] - miasto:", id)
         if self.fhdskin:
             self["myPic"].instance.setPixmapFromFile(PluginPath + "/meteogramfhd.png")
         else:
             self["myPic"].instance.setPixmapFromFile(PluginPath + "/meteogram.png")
         self["info"].setText("Ładuję")
         url = "http://www.meteo.pl/um/php/meteorogram_id_um.php?ntype=0u&id=%s" % id
-        getPage(url).addCallback(self.infoCB).addErrback(self.error)
+        try:
+            www = urlopen(Request(url, headers=hs)).read()
+            soup = BeautifulSoup(www, 'html.parser')
+            self.infoCB(soup)
+        except:
+            self.error()
 
     def error(self, error = None):
         if error is not None:
@@ -181,14 +194,17 @@ class Meteo(Screen):
         upng = "http://www.meteo.pl/um/metco/mgram_pict.php?ntype=0u&ffdate=%s&row=%s&col=%s&lang=pl"
         #var fcstdate = "2013080306";var ntype ="0u";var lang ="pl";var id="2119";var act_x = 208;var act_y = 393;
         r = r'.*fcstdate = "(202\d{7})";.*var id="(\d+)";var act_x = (\d+);var act_y = (\d+);.*div id=.model_napis[^\n]+\n[^\n]+\n(.*)\<\/font...div.*'
+        html = str(html)
         m = re.search(r, html, re.M|re.DOTALL)
         if m:
             d, id, x, y, o = m.groups()
             url = upng % (d,y,x)
             o = "%i/%i  #%s Start prognozy %s-%s-%s %s:00     %s" % (self.active + 1, len(self.miejsca), id, d[0:4], d[4:6], d[6:8], d[8:10], o.replace('&nbsp;',' ')) 
-            o = o.decode('iso-8859-2').encode("utf-8")
-            print "Meteo url png:", url
-            downloadPage(url,'/tmp/meteo.png').addCallback(self.pngCB).addErrback(self.error)
+            try:
+                www = urlretrieve(url, '/tmp/meteo.png')
+                self.pngCB(www)
+            except:
+                self.error()
         else:
             o ='Problem z pobraniem informacji o meteogramie ;-('
         self["info"].setText(o)
@@ -221,8 +237,8 @@ class Meteo(Screen):
 
     def menu(self):
         try:
-            import configure
-            reload(configure)
+            from . import configure
+            importlib.reload(configure)
             self.session.openWithCallback(self.poConfigureCB, configure.Configure)
             self.load_ini()
         except:
